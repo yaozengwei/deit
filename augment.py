@@ -9,7 +9,7 @@ and timm DA(https://github.com/rwightman/pytorch-image-models)
 import torch
 from torchvision import transforms
 
-from timm.data.transforms import _pil_interp, RandomResizedCropAndInterpolation, ToNumpy, ToTensor
+from timm.data.transforms import RandomResizedCropAndInterpolation, ToNumpy, ToTensor
 
 import numpy as np
 from torchvision import datasets, transforms
@@ -62,15 +62,15 @@ class gray_scale(object):
     def __init__(self, p=0.2):
         self.p = p
         self.transf = transforms.Grayscale(3)
- 
+
     def __call__(self, img):
         if random.random() < self.p:
             return self.transf(img)
         else:
             return img
- 
-    
-    
+
+
+
 class horizontal_flip(object):
     """
     Apply Solarization to the PIL image.
@@ -78,15 +78,15 @@ class horizontal_flip(object):
     def __init__(self, p=0.2,activate_pred=False):
         self.p = p
         self.transf = transforms.RandomHorizontalFlip(p=1.0)
- 
+
     def __call__(self, img):
         if random.random() < self.p:
             return self.transf(img)
         else:
             return img
-        
-    
-    
+
+
+
 def new_data_aug_generator(args = None):
     img_size = args.input_size
     remove_random_resized_crop = args.src
@@ -107,11 +107,11 @@ def new_data_aug_generator(args = None):
             transforms.RandomHorizontalFlip()
         ]
 
-        
+
     secondary_tfl = [transforms.RandomChoice([gray_scale(p=1.0),
                                               Solarization(p=1.0),
                                               GaussianBlur(p=1.0)])]
-   
+
     if args.color_jitter is not None and not args.color_jitter==0:
         secondary_tfl.append(transforms.ColorJitter(args.color_jitter, args.color_jitter, args.color_jitter))
     final_tfl = [
