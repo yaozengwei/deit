@@ -26,52 +26,39 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
-    
-    if args.cosub:
-        criterion = torch.nn.BCEWithLogitsLoss()
-        
+
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
 
         if mixup_fn is not None:
             samples, targets = mixup_fn(samples, targets)
-            
-        if args.cosub:
-            samples = torch.cat((samples,samples),dim=0)
-            
+
         if args.bce_loss:
             targets = targets.gt(0.0).type(targets.dtype)
-         
+
         with torch.cuda.amp.autocast():
-            outputs = model(samples)
-            if not args.cosub:
-                loss = criterion(samples, outputs, targets)
-            else:
-                outputs = torch.split(outputs, outputs.shape[0]//2, dim=0)
-                loss = 0.25 * criterion(outputs[0], targets) 
-                loss = loss + 0.25 * criterion(outputs[1], targets) 
-                loss = loss + 0.25 * criterion(outputs[0], outputs[1].detach().sigmoid())
-                loss = loss + 0.25 * criterion(outputs[1], outputs[0].detach().sigmoid()) 
+            loss, base_loss, deriv_loss = criterion(samples, targets)
 
         loss_value = loss.item()
-
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             sys.exit(1)
-
-        optimizer.zero_grad()
 
         # this attribute is added by timm on one optimizer (adahessian)
         is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
         loss_scaler(loss, optimizer, clip_grad=max_norm,
                     parameters=model.parameters(), create_graph=is_second_order)
 
+        optimizer.zero_grad()
+
         torch.cuda.synchronize()
         if model_ema is not None:
             model_ema.update(model)
 
         metric_logger.update(loss=loss_value)
+        metric_logger.update(base_loss=base_loss.item())
+        metric_logger.update(deriv_loss=deriv_loss.item())
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

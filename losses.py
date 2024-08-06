@@ -53,18 +53,71 @@ class DistillationLoss(torch.nn.Module):
             # with slight modifications
             distillation_loss = F.kl_div(
                 F.log_softmax(outputs_kd / T, dim=1),
-                #We provide the teacher's targets in log probability because we use log_target=True 
+                #We provide the teacher's targets in log probability because we use log_target=True
                 #(as recommended in pytorch https://github.com/pytorch/pytorch/blob/9324181d0ac7b4f7949a574dbc3e8be30abe7041/torch/nn/functional.py#L2719)
                 #but it is possible to give just the probabilities and set log_target=False. In our experiments we tried both.
                 F.log_softmax(teacher_outputs / T, dim=1),
                 reduction='sum',
                 log_target=True
             ) * (T * T) / outputs_kd.numel()
-            #We divide by outputs_kd.numel() to have the legacy PyTorch behavior. 
-            #But we also experiments output_kd.size(0) 
+            #We divide by outputs_kd.numel() to have the legacy PyTorch behavior.
+            #But we also experiments output_kd.size(0)
             #see issue 61(https://github.com/facebookresearch/deit/issues/61) for more details
         elif self.distillation_type == 'hard':
             distillation_loss = F.cross_entropy(outputs_kd, teacher_outputs.argmax(dim=1))
 
         loss = base_loss * (1 - self.alpha) + distillation_loss * self.alpha
         return loss
+
+
+class DerivDistillationLoss(torch.nn.Module):
+    """
+    This module wraps a standard criterion and adds an extra knowledge distillation loss by
+    taking a teacher model prediction and using it as additional supervision.
+    """
+    def __init__(self, base_criterion: torch.nn.Module,
+                 model: torch.nn.Module, teacher_model: torch.nn.Module,
+                 distillation_type: str, alpha: float):
+        super().__init__()
+        self.base_criterion = base_criterion
+        self.model = model
+        self.teacher_model = teacher_model
+        assert distillation_type in ['mse', 'cos_sim']
+        self.distillation_type = distillation_type
+        self.alpha = alpha
+
+    def forward(self, inputs, labels):
+        """
+        Args:
+            inputs: The original inputs that are feed to the teacher model
+            outputs: the outputs of the model to be trained. It is expected to be
+                either a Tensor, or a Tuple[Tensor, Tensor], with the original output
+                in the first position and the distillation predictions as the second output
+            labels: the labels for the base criterion
+        """
+        inputs = inputs.detach()
+        inputs.requires_grad = True
+        labels.requires_grad = False
+
+        teacher_outputs = self.teacher_model(inputs)
+        base_loss_teacher = self.base_criterion(teacher_outputs, labels)
+        x_deriv_teacher, = torch.autograd.grad([base_loss_teacher], [inputs])
+        # note, inputs stil has requires_grad = True
+
+        outputs = self.model(inputs)
+        base_loss = self.base_criterion(outputs, labels)
+        x_deriv, = torch.autograd.grad([base_loss], [inputs],
+                                       create_graph=True, retain_graph=True)
+
+        # view as (batch,*)
+        x_deriv = x_deriv.flatten(start_dim=1)
+        x_deriv_teacher = x_deriv_teacher.flatten(start_dim=1)
+        if self.distillation_type == 'mse':
+            deriv_loss = ((x_deriv - x_deriv_teacher) ** 2).sum(dim=-1).mean() * 1e3
+        else:
+            # TODO: compute cos-sim for each patch
+            deriv_loss = -F.cosine_similarity(x_deriv, x_deriv_teacher, dim=-1).mean()
+
+        loss = base_loss * (1 - self.alpha) + deriv_loss * self.alpha
+
+        return loss, base_loss, deriv_loss

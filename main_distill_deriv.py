@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 from timm.data import Mixup
+from timm.layers.config import set_fused_attn
 from timm.models import create_model
 from timm.models.registry import model_entrypoint
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
@@ -19,8 +20,8 @@ from timm.optim import create_optimizer
 from timm.utils import NativeScaler, get_state_dict, ModelEma
 
 from datasets import build_dataset
-from engine import train_one_epoch, evaluate
-from losses import DistillationLoss
+from engine_distill_deriv import train_one_epoch, evaluate
+from losses import DerivDistillationLoss
 from samplers import RASampler
 from augment import new_data_aug_generator
 
@@ -52,6 +53,7 @@ def get_args_parser():
     parser.set_defaults(model_ema=True)
     parser.add_argument('--model-ema-decay', type=float, default=0.99996, help='')
     parser.add_argument('--model-ema-force-cpu', action='store_true', default=False, help='')
+    parser.add_argument('--fused-attn', action='store_true', default=False, help='')
 
     # Optimizer parameters
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',
@@ -143,9 +145,8 @@ def get_args_parser():
     parser.add_argument('--teacher-model', default='regnety_160', type=str, metavar='MODEL',
                         help='Name of teacher model to train (default: "regnety_160"')
     parser.add_argument('--teacher-path', type=str, default='')
-    parser.add_argument('--distillation-type', default='none', choices=['none', 'soft', 'hard'], type=str, help="")
+    parser.add_argument('--distillation-type', default='mse', choices=['mse', 'cos_sim'], type=str, help="")
     parser.add_argument('--distillation-alpha', default=0.5, type=float, help="")
-    parser.add_argument('--distillation-tau', default=1.0, type=float, help="")
 
     # * Cosub params
     parser.add_argument('--cosub', action='store_true')
@@ -370,25 +371,37 @@ def main(args):
     if args.distillation_type != 'none':
         assert args.teacher_path, 'need to specify teacher-path when using distillation'
         print(f"Creating teacher model: {args.teacher_model}")
-        teacher_model = create_model(
-            args.teacher_model,
+        # teacher_model = create_model(
+        #     args.teacher_model,
+        #     pretrained=False,
+        #     num_classes=args.nb_classes,
+        #     global_pool='avg',
+        # )
+        # if args.teacher_path.startswith('https'):
+        #     checkpoint = torch.hub.load_state_dict_from_url(
+        #         args.teacher_path, map_location='cpu', check_hash=True)
+        # else:
+        #     checkpoint = torch.load(args.teacher_path, map_location='cpu')
+        create_fn = model_entrypoint(args.teacher_model)
+        teacher_model = create_fn(
             pretrained=False,
             num_classes=args.nb_classes,
-            global_pool='avg',
+            drop_rate=args.drop,
+            drop_path_rate=args.drop_path,
+            img_size=args.input_size
         )
-        if args.teacher_path.startswith('https'):
-            checkpoint = torch.hub.load_state_dict_from_url(
-                args.teacher_path, map_location='cpu', check_hash=True)
-        else:
-            checkpoint = torch.load(args.teacher_path, map_location='cpu')
+        checkpoint = torch.load(args.teacher_path, map_location='cpu')
         teacher_model.load_state_dict(checkpoint['model'])
         teacher_model.to(device)
         teacher_model.eval()
 
+        for p in teacher_model.parameters():
+            p.requires_grad = False
+
     # wrap the criterion in our custom DistillationLoss, which
     # just dispatches to the original criterion if args.distillation_type is 'none'
-    criterion = DistillationLoss(
-        criterion, teacher_model, args.distillation_type, args.distillation_alpha, args.distillation_tau
+    criterion = DerivDistillationLoss(
+        criterion, model, teacher_model, args.distillation_type, args.distillation_alpha
     )
 
     output_dir = Path(args.output_dir)
@@ -442,7 +455,6 @@ def main(args):
                     'args': args,
                 }, checkpoint_path)
 
-
         test_stats = evaluate(data_loader_val, model, device)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
 
@@ -483,6 +495,9 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('DeiT training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
+
+    set_fused_attn(enable=args.fused_attn)
+
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)
