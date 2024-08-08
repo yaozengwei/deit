@@ -36,6 +36,7 @@ def get_args_parser():
     parser.add_argument('--epochs', default=300, type=int)
     parser.add_argument('--bce-loss', action='store_true')
     parser.add_argument('--unscale-lr', action='store_true')
+    parser.add_argument('--use-amp', action='store_true', default=False, help='')
 
     # Model parameters
     parser.add_argument('--model', default='deit_base_patch16_224', type=str, metavar='MODEL',
@@ -370,17 +371,26 @@ def main(args):
     if args.distillation_type != 'none':
         assert args.teacher_path, 'need to specify teacher-path when using distillation'
         print(f"Creating teacher model: {args.teacher_model}")
-        teacher_model = create_model(
-            args.teacher_model,
+        # teacher_model = create_model(
+        #     args.teacher_model,
+        #     pretrained=False,
+        #     num_classes=args.nb_classes,
+        #     global_pool='avg',
+        # )
+        # if args.teacher_path.startswith('https'):
+        #     checkpoint = torch.hub.load_state_dict_from_url(
+        #         args.teacher_path, map_location='cpu', check_hash=True)
+        # else:
+        #     checkpoint = torch.load(args.teacher_path, map_location='cpu')
+        create_fn = model_entrypoint(args.teacher_model)
+        teacher_model = create_fn(
             pretrained=False,
             num_classes=args.nb_classes,
-            global_pool='avg',
+            drop_rate=args.drop,
+            drop_path_rate=args.drop_path,
+            img_size=args.input_size
         )
-        if args.teacher_path.startswith('https'):
-            checkpoint = torch.hub.load_state_dict_from_url(
-                args.teacher_path, map_location='cpu', check_hash=True)
-        else:
-            checkpoint = torch.load(args.teacher_path, map_location='cpu')
+        checkpoint = torch.load(args.teacher_path, map_location='cpu')
         teacher_model.load_state_dict(checkpoint['model'])
         teacher_model.to(device)
         teacher_model.eval()
@@ -409,7 +419,7 @@ def main(args):
                 loss_scaler.load_state_dict(checkpoint['scaler'])
         lr_scheduler.step(args.start_epoch)
     if args.eval:
-        test_stats = evaluate(data_loader_val, model, device)
+        test_stats = evaluate(data_loader_val, model, device, args)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         return
 
@@ -443,7 +453,7 @@ def main(args):
                 }, checkpoint_path)
 
 
-        test_stats = evaluate(data_loader_val, model, device)
+        test_stats = evaluate(data_loader_val, model, device, args)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
 
         if max_accuracy < test_stats["acc1"]:

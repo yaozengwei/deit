@@ -26,33 +26,33 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
-    
+
     if args.cosub:
         criterion = torch.nn.BCEWithLogitsLoss()
-        
+
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
 
         if mixup_fn is not None:
             samples, targets = mixup_fn(samples, targets)
-            
+
         if args.cosub:
             samples = torch.cat((samples,samples),dim=0)
-            
+
         if args.bce_loss:
             targets = targets.gt(0.0).type(targets.dtype)
-         
-        with torch.cuda.amp.autocast():
+
+        with torch.cuda.amp.autocast(enabled=args.use_amp):
             outputs = model(samples)
             if not args.cosub:
                 loss = criterion(samples, outputs, targets)
             else:
                 outputs = torch.split(outputs, outputs.shape[0]//2, dim=0)
-                loss = 0.25 * criterion(outputs[0], targets) 
-                loss = loss + 0.25 * criterion(outputs[1], targets) 
+                loss = 0.25 * criterion(outputs[0], targets)
+                loss = loss + 0.25 * criterion(outputs[1], targets)
                 loss = loss + 0.25 * criterion(outputs[0], outputs[1].detach().sigmoid())
-                loss = loss + 0.25 * criterion(outputs[1], outputs[0].detach().sigmoid()) 
+                loss = loss + 0.25 * criterion(outputs[1], outputs[0].detach().sigmoid())
 
         loss_value = loss.item()
 
@@ -80,7 +80,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
 
 
 @torch.no_grad()
-def evaluate(data_loader, model, device):
+def evaluate(data_loader, model, device, args):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -94,7 +94,7 @@ def evaluate(data_loader, model, device):
         target = target.to(device, non_blocking=True)
 
         # compute output
-        with torch.cuda.amp.autocast():
+        with torch.cuda.amp.autocast(enabled=args.use_amp):
             output = model(images)
             loss = criterion(output, target)
 

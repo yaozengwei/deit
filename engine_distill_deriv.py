@@ -37,7 +37,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
         if args.bce_loss:
             targets = targets.gt(0.0).type(targets.dtype)
 
-        with torch.cuda.amp.autocast():
+        with torch.cuda.amp.autocast(enabled=args.use_amp):
             loss, base_loss, deriv_loss = criterion(samples, targets)
 
         loss_value = loss.item()
@@ -67,7 +67,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
 
 
 @torch.no_grad()
-def evaluate(data_loader, model, device):
+def evaluate(data_loader, model, device, args):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -81,7 +81,7 @@ def evaluate(data_loader, model, device):
         target = target.to(device, non_blocking=True)
 
         # compute output
-        with torch.cuda.amp.autocast():
+        with torch.cuda.amp.autocast(enabled=args.use_amp):
             output = model(images)
             loss = criterion(output, target)
 
