@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 from timm.data import Mixup
+from timm.layers.config import set_fused_attn
 from timm.models import create_model
 from timm.models.registry import model_entrypoint
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
@@ -26,6 +27,7 @@ from augment import new_data_aug_generator
 
 import models
 import models_v2
+import models_v3
 
 import utils
 
@@ -37,6 +39,7 @@ def get_args_parser():
     parser.add_argument('--bce-loss', action='store_true')
     parser.add_argument('--unscale-lr', action='store_true')
     parser.add_argument('--use-amp', action='store_true', default=False, help='')
+    parser.add_argument('--fused-attn', action='store_true', default=False, help='')
 
     # Model parameters
     parser.add_argument('--model', default='deit_base_patch16_224', type=str, metavar='MODEL',
@@ -493,6 +496,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('DeiT training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
+    set_fused_attn(enable=args.fused_attn)
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)

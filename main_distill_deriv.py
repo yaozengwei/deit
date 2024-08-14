@@ -146,7 +146,7 @@ def get_args_parser():
     parser.add_argument('--teacher-model', default='regnety_160', type=str, metavar='MODEL',
                         help='Name of teacher model to train (default: "regnety_160"')
     parser.add_argument('--teacher-path', type=str, default='')
-    parser.add_argument('--distillation-type', default='mse', choices=['mse', 'cos_sim'], type=str, help="")
+    parser.add_argument('--distillation-type', default='mse', choices=['mse', 'l2', 'cos_sim'], type=str, help="")
     parser.add_argument('--distillation-alpha', default=0.5, type=float, help="")
 
     # * Cosub params

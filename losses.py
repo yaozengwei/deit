@@ -82,7 +82,7 @@ class DerivDistillationLoss(torch.nn.Module):
         self.base_criterion = base_criterion
         self.model = model
         self.teacher_model = teacher_model
-        assert distillation_type in ['mse', 'cos_sim']
+        assert distillation_type in ['mse', 'l2', 'cos_sim']
         self.distillation_type = distillation_type
         self.alpha = alpha
 
@@ -114,6 +114,8 @@ class DerivDistillationLoss(torch.nn.Module):
         x_deriv_teacher = x_deriv_teacher.flatten(start_dim=1)
         if self.distillation_type == 'mse':
             deriv_loss = ((x_deriv - x_deriv_teacher) ** 2).sum(dim=-1).mean() * 1e3
+        elif self.distillation_type == 'l2':
+            deriv_loss = (((x_deriv - x_deriv_teacher) ** 2).sum(dim=-1) + 1e-6).sqrt().mean() * 1e3
         else:
             # TODO: compute cos-sim for each patch
             deriv_loss = -F.cosine_similarity(x_deriv, x_deriv_teacher, dim=-1).mean()
